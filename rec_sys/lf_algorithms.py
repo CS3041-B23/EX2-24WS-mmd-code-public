@@ -161,12 +161,61 @@ def uv_factorization_vec_no_reg(mat_u, mat_v, train_ds, valid_ds, config):
             f"Epoch {epoch} finished, ave training loss: {train_loss_mean:.6f}, ave validation loss: {valid_loss_mean:.6f}")
     return mat_u, mat_v
 
+def uv_factorization_reg(mat_u, mat_v, train_ds, valid_ds, config, regularization):
+    """ Matrix factorization using SGD with regularization
+        Fast vectorized implementation using JAX
+    """
+    # Need to update the mse_loss_one_batch to factor in regularization term 
+    # given in slide 22 of slide deck 3
+    # Currently mse_loss_one_batch only 
+    def mse_loss_with_reg(mat_u, mat_v, record):
+      """This colab experiment motivates the implementation:
+      https://colab.research.google.com/drive/1c0LpSndbTJaHVoLTatQCbGhlsWbpgvYh?usp&#x3D;sharing=
+      """
+      # Define regularization used, direction state it can be the same for both u and v
+      regularization = 0.01
+
+      rows, columns, ratings = record["movie_id"], record["user_id"], record["user_rating"]
+      estimator = -(mat_u @ mat_v)[(rows, columns)]
+      square_err = jnp.square(estimator + ratings)
+      # Updated square_err that adds regularization term
+      reg_term = (regularization*jnp.mean(jnp.square(mat_u)) + regularization*jnp.mean(jnp.square(mat_v)))
+      mse = jnp.mean(square_err) + reg_term
+      return mse
+
+    @jax.jit  # Comment out for single-step debugging
+    def update_uv(mat_u, mat_v, record, lr):
+        # Instead of using mse_loss_one_batch we use our mse that factors in reg
+        loss_value, grad = jax.value_and_grad(mse_loss_with_reg, argnums=[0, 1])(mat_u, mat_v, record)
+        mat_u = mat_u - lr * grad[0]
+        mat_v = mat_v - lr * grad[1]
+        return mat_u, mat_v, loss_value
+
+    for epoch in range(config.num_epochs):
+        lr = config.fixed_learning_rate if config.fixed_learning_rate is not None \
+            else config.dyn_lr_initial * (config.dyn_lr_decay_rate ** (epoch / config.dyn_lr_steps))
+        print(f"In uv_factorization_reg, starting epoch {epoch} with lr={lr:.6f}")
+        train_loss = []
+        for record in tfds.as_numpy(train_ds.batch(config.batch_size_training)):
+            mat_u, mat_v, loss = update_uv(mat_u, mat_v, record, lr)
+            train_loss.append(loss)
+
+        train_loss_mean = jnp.mean(jnp.array(train_loss))
+        # Compute loss on the validation set
+        valid_loss = mse_loss_all_batches(mat_u, mat_v, valid_ds, config.batch_size_predict_with_mse)
+        valid_loss_mean = jnp.mean(jnp.array(valid_loss))
+        print(
+            f"Epoch {epoch} finished, ave training loss: {train_loss_mean:.6f}, ave validation loss: {valid_loss_mean:.6f}")
+    return mat_u, mat_v
+
+
 
 @dataclasses.dataclass
 class Flags:
     evaluate_uv_factorization_dense_um = False
     evaluate_uv_factorization_tf_slow = False
     evaluate_uv_factorization_vec_no_reg = True
+    # evaluate_uv_factorization_reg = True
 
 
 # Test the functions
@@ -223,6 +272,4 @@ if __name__ == '__main__':
         show_metrics_and_examples("====== Before optimization =====", matrix_u, matrix_v)
 
         # Optimize the factors fast
-        matrix_u, matrix_v = uv_factorization_vec_no_reg(matrix_u, matrix_v, train_ds, valid_ds, config)
-
-        show_metrics_and_examples("====== After optimization =====", matrix_u, matrix_v)
+        matrix_u, matrix_v = uv_factorization_reg(matrix_u, matrix_v, train_ds, valid_ds, config, 0.01)
