@@ -161,6 +161,7 @@ def uv_factorization_vec_no_reg(mat_u, mat_v, train_ds, valid_ds, config):
             f"Epoch {epoch} finished, ave training loss: {train_loss_mean:.6f}, ave validation loss: {valid_loss_mean:.6f}")
     return mat_u, mat_v
 
+# Need to add fixed learning rate here so you can use a for loop to iterate through a 5 learning rates and 5 regularizations for 5x5 grid search
 def uv_factorization_reg(mat_u, mat_v, train_ds, valid_ds, config, regularization):
     """ Matrix factorization using SGD with regularization
         Fast vectorized implementation using JAX
